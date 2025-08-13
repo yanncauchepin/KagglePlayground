@@ -13,12 +13,13 @@ import xgboost as xgb
 from catboost import CatBoostClassifier
 from scipy.stats import uniform, randint
 from pathlib import Path
-    
+from datetime import datetime
+
 LOCAL = True
 
 try:
-    # local_data_path = Path("c:\\users\\cauchepy\\Datasets\\Datatables\\kaggle_classificationbanks5e8\\")
-    local_data_path = Path("/home/yanncauchepin/Datasets/Datatables/kaggle_classificationbanks5e8/")
+    local_data_path = Path("c:\\users\\cauchepy\\Datasets\\Datatables\\kaggle_classificationbanks5e8\\")
+    # local_data_path = Path("/home/yanncauchepin/Datasets/Datatables/kaggle_classificationbanks5e8/")
     train_df = pd.read_csv(Path(local_data_path, "train.csv"))
     test_df = pd.read_csv(Path(local_data_path, "test.csv"))
 except FileNotFoundError:
@@ -124,12 +125,12 @@ param_distributions = {
 random_search = RandomizedSearchCV(
     final_pipeline,
     param_distributions=param_distributions,
-    n_iter=100,
+    n_iter=1,
     cv=3,      
     scoring='accuracy',
     verbose=2,
-    random_state=42,
-    n_jobs=-1 
+    random_state=int(datetime.now().strftime("%M%S")),
+    n_jobs=-1
 )
 
 print("Starting Randomized Search for hyperparameter tuning...")
