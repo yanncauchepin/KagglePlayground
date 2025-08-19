@@ -14,8 +14,10 @@ from catboost import CatBoostClassifier
 from scipy.stats import uniform, randint
 from pathlib import Path
 from datetime import datetime
+import random
 
 LOCAL = True
+ATTEMPT = 1
 
 try:
     local_data_path = Path("c:\\users\\cauchepy\\Datasets\\Datatables\\kaggle_classificationbanks5e8\\")
@@ -121,26 +123,52 @@ param_distributions = {
     'classifier__mlp__module__dropout_rate': uniform(0.2, 0.4)
 }
 
+if ATTEMPT > 1:
 
-random_search = RandomizedSearchCV(
-    final_pipeline,
-    param_distributions=param_distributions,
-    n_iter=1,
-    cv=3,      
-    scoring='accuracy',
-    verbose=2,
-    random_state=int(datetime.now().strftime("%M%S")),
-    n_jobs=-1
-)
+    random_search = RandomizedSearchCV(
+        final_pipeline,
+        param_distributions=param_distributions,
+        n_iter=1,
+        cv=3,      
+        scoring='accuracy',
+        verbose=2,
+        random_state=int(datetime.now().strftime("%M%S")),
+        n_jobs=-1
+    )
 
-print("Starting Randomized Search for hyperparameter tuning...")
-random_search.fit(X_train, y_train)
+    print("Starting Randomized Search for hyperparameter tuning...")
+    random_search.fit(X_train, y_train)
 
-print("\nTuning complete.")
-print("Best parameters found: ", random_search.best_params_)
-print("Best cross-validation accuracy: {:.4f}".format(random_search.best_score_))
+    print("\nTuning complete.")
+    print("Best parameters found: ", random_search.best_params_)
+    print("Best cross-validation accuracy: {:.4f}".format(random_search.best_score_))
 
-best_model = random_search.best_estimator_
+    best_model = random_search.best_estimator_
+
+else:
+    
+    seed = int(datetime.now().strftime("%M%S"))
+    random.seed(seed)
+    np.random.seed(seed)
+
+    # Manually select one set of random parameters
+    selected_params = {}
+    for param, distribution in param_distributions.items():
+        if hasattr(distribution, 'rvs'):
+            # For scipy.stats distributions
+            selected_params[param] = distribution.rvs(random_state=seed)
+        else:
+            # For lists of values
+            selected_params[param] = random.choice(distribution)
+
+    print("Selected random parameters for this run:")
+    print(selected_params)
+
+    # Set the chosen parameters to the pipeline
+    final_pipeline.set_params(**selected_params)
+    
+    final_pipeline.fit(X_train, y_train)
+    best_model = final_pipeline
 
 print("\nEvaluating the best model on the validation set...")
 y_pred_val = best_model.predict(X_val)
