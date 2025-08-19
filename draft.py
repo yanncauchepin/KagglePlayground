@@ -7,17 +7,16 @@ from sklearn.pipeline import Pipeline
 import torch
 import torch.nn as nn
 from skorch import NeuralNetClassifier
-from sklearn.model_selection import train_test_split, RandomizedSearchCV
+from sklearn.model_selection import train_test_split, RandomizedSearchCV, ParameterSampler
 from sklearn.metrics import accuracy_score
 import xgboost as xgb
 from catboost import CatBoostClassifier
 from scipy.stats import uniform, randint
 from pathlib import Path
 from datetime import datetime
-import random
+from skorch.callbacks import EarlyStopping
 
 LOCAL = True
-ATTEMPT = 1
 
 try:
     local_data_path = Path("c:\\users\\cauchepy\\Datasets\\Datatables\\kaggle_classificationbanks5e8\\")
@@ -58,6 +57,10 @@ preprocessor = ColumnTransformer(
     remainder='passthrough'
 )
 
+# --- Start of new code ---
+N_ITER = 1
+# --- End of new code ---
+
 class MLP(nn.Module):
     def __init__(self, input_size, hidden_sizes, output_size, dropout_rate=0.2):
         super(MLP, self).__init__()
@@ -87,11 +90,12 @@ mlp_model = NeuralNetClassifier(
     optimizer=torch.optim.Adam,
     train_split=None,
     verbose=0,
-    device='cuda' if torch.cuda.is_available() else 'cpu'
+    device='cuda' if torch.cuda.is_available() else 'cpu',
+    callbacks=[EarlyStopping(monitor='valid_acc', patience=10, lower_is_better=False)]
 )
 
-xgb_model = xgb.XGBClassifier(objective='binary:logistic', eval_metric='logloss', random_state=42)
-catboost_model = CatBoostClassifier(verbose=0, random_state=42)
+xgb_model = xgb.XGBClassifier(objective='binary:logistic', eval_metric='logloss', random_state=42, early_stopping_rounds=10)
+catboost_model = CatBoostClassifier(verbose=0, random_state=42, early_stopping_rounds=10)
 
 voting_clf = VotingClassifier(
     estimators=[
@@ -103,12 +107,20 @@ voting_clf = VotingClassifier(
 )
 
 final_pipeline = Pipeline(steps=[
-    ('preprocessor', preprocessor),
+    # ('preprocessor', preprocessor),
     ('classifier', voting_clf)
 ])
 
 
 X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=42)
+
+# Preprocess data before splitting
+X_processed = preprocessor.fit_transform(X)
+X_test_processed = preprocessor.transform(X_test)
+
+# Split processed data
+X_train_processed, X_val_processed, y_train, y_val = train_test_split(X_processed, y, test_size=0.15, random_state=42)
+
 
 param_distributions = {
     'classifier__xgb__n_estimators': randint(500, 1500),
@@ -123,12 +135,47 @@ param_distributions = {
     'classifier__mlp__module__dropout_rate': uniform(0.2, 0.4)
 }
 
-if ATTEMPT > 1:
 
+# --- Start of new code ---
+if N_ITER == 1:
+    print("Running a single attempt without cross-validation...")
+
+    # Sample one set of parameters
+    param_sampler = ParameterSampler(param_distributions, n_iter=1, random_state=int(datetime.now().strftime("%M%S")))
+    params = list(param_sampler)[0]
+    
+    print("\nSelected parameters for this run:")
+    print(params)
+
+    # Set parameters to the pipeline
+    final_pipeline.set_params(**params)
+
+    # Fit the model
+    print("\nTraining the model...")
+    fit_params = {
+        'classifier__xgb__eval_set': [(X_val_processed, y_val)],
+        'classifier__catboost__eval_set': [(X_val_processed, y_val)],
+        'classifier__mlp__X': X_train_processed,
+        'classifier__mlp__y': y_train,
+        'classifier__mlp__validation_data': (X_val_processed, y_val)
+    }
+    final_pipeline.fit(X_train_processed, y_train, **fit_params)
+
+    # Evaluate on validation set
+    print("\nEvaluating the model on the validation set...")
+    y_pred_val = final_pipeline.predict(X_val_processed)
+    accuracy = accuracy_score(y_val, y_pred_val)
+    print(f"Validation Accuracy: {accuracy:.4f}")
+
+    best_model = final_pipeline
+    val_score = accuracy
+
+else:
+    print(f"Starting Randomized Search for hyperparameter tuning with n_iter={N_ITER}...")
     random_search = RandomizedSearchCV(
         final_pipeline,
         param_distributions=param_distributions,
-        n_iter=1,
+        n_iter=N_ITER,
         cv=3,      
         scoring='accuracy',
         verbose=2,
@@ -136,60 +183,44 @@ if ATTEMPT > 1:
         n_jobs=-1
     )
 
-    print("Starting Randomized Search for hyperparameter tuning...")
-    random_search.fit(X_train, y_train)
+    fit_params = {
+        'classifier__xgb__eval_set': [(X_val_processed, y_val)],
+        'classifier__catboost__eval_set': [(X_val_processed, y_val)],
+        'classifier__mlp__X': X_train_processed,
+        'classifier__mlp__y': y_train,
+        'classifier__mlp__validation_data': (X_val_processed, y_val)
+    }
+    random_search.fit(X_train_processed, y_train, **fit_params)
 
     print("\nTuning complete.")
     print("Best parameters found: ", random_search.best_params_)
     print("Best cross-validation accuracy: {:.4f}".format(random_search.best_score_))
 
     best_model = random_search.best_estimator_
+    val_score = random_search.best_score_
 
-else:
-    
-    seed = int(datetime.now().strftime("%M%S"))
-    random.seed(seed)
-    np.random.seed(seed)
-
-    # Manually select one set of random parameters
-    selected_params = {}
-    for param, distribution in param_distributions.items():
-        if hasattr(distribution, 'rvs'):
-            # For scipy.stats distributions
-            selected_params[param] = distribution.rvs(random_state=seed)
-        else:
-            # For lists of values
-            selected_params[param] = random.choice(distribution)
-
-    print("Selected random parameters for this run:")
-    print(selected_params)
-
-    # Set the chosen parameters to the pipeline
-    final_pipeline.set_params(**selected_params)
-    
-    final_pipeline.fit(X_train, y_train)
-    best_model = final_pipeline
-
-print("\nEvaluating the best model on the validation set...")
-y_pred_val = best_model.predict(X_val)
-
-accuracy = accuracy_score(y_val, y_pred_val)
-print(f"Validation Accuracy: {accuracy:.4f}")
-
+    # Re-evaluate on the validation set to get a final validation score
+    print("\nEvaluating the best model on the validation set...")
+    y_pred_val = best_model.predict(X_val_processed)
+    accuracy = accuracy_score(y_val, y_pred_val)
+    print(f"Validation Accuracy: {accuracy:.4f}")
+    val_score = accuracy # Use the direct validation score for the filename
 
 print("\nMaking final predictions on the test data...")
-test_predictions_proba = best_model.predict_proba(X_test)
+test_predictions_proba = best_model.predict_proba(X_test_processed)
 
 submission_df = pd.DataFrame({
     'id': test_df['id'],
     'Personality': test_predictions_proba[:,1]
 })
 
+submission_filename = f'submission_{val_score:.4f}.csv'
 if LOCAL:
     ROOT_DIR = Path(__file__).parent
-    submission_df.to_csv(Path(ROOT_DIR, 'submission.csv'), index=False)
+    submission_df.to_csv(Path(ROOT_DIR, submission_filename), index=False)
 else:
-    submission_df.to_csv('submission.csv', index=False)
+    submission_df.to_csv(submission_filename, index=False)
 
-print("\nSubmission file 'submission.csv' created successfully!")
+print(f"\nSubmission file '{submission_filename}' created successfully!")
 print(submission_df.head())
+# --- End of new code ---
