@@ -15,6 +15,9 @@ from scipy.stats import uniform, randint
 from pathlib import Path
 from datetime import datetime
 from skorch.callbacks import EarlyStopping
+import sklearn
+
+N_ITER = 1
 
 LOCAL = True
 
@@ -27,6 +30,8 @@ except FileNotFoundError:
     train_df = pd.read_csv("/kaggle/input/playground-series-s5e8/train.csv")
     test_df = pd.read_csv("/kaggle/input/playground-series-s5e8/test.csv")
     LOCAL = False
+    
+sklearn.set_config(enable_metadata_routing=True)
     
 target_col = "y"
 
@@ -56,10 +61,6 @@ preprocessor = ColumnTransformer(
     ],
     remainder='passthrough'
 )
-
-# --- Start of new code ---
-N_ITER = 1
-# --- End of new code ---
 
 class MLP(nn.Module):
     def __init__(self, input_size, hidden_sizes, output_size, dropout_rate=0.2):
@@ -95,7 +96,10 @@ mlp_model = NeuralNetClassifier(
 )
 
 xgb_model = xgb.XGBClassifier(objective='binary:logistic', eval_metric='logloss', random_state=42, early_stopping_rounds=10)
+xgb_model.set_fit_params(eval_set=True)
+
 catboost_model = CatBoostClassifier(verbose=0, random_state=42, early_stopping_rounds=10)
+catboost_model.set_fit_params(eval_set=True)
 
 voting_clf = VotingClassifier(
     estimators=[
@@ -223,4 +227,3 @@ else:
 
 print(f"\nSubmission file '{submission_filename}' created successfully!")
 print(submission_df.head())
-# --- End of new code ---
