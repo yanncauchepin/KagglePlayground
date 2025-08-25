@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import VotingClassifier
 from sklearn.pipeline import Pipeline
@@ -19,13 +19,13 @@ from skorch.dataset import ValidSplit # <-- Added import
 import sklearn
 from sklearn.base import clone # <-- Added import
 
-N_ITER = 20
+N_ITER = 1
 
 LOCAL = True
 
 try:
-    # local_data_path = Path("c:\\users\\cauchepy\\Datasets\\Datatables\\kaggle_classificationbanks5e8\\")
-    local_data_path = Path("/home/yanncauchepin/Datasets/Datatables/kaggle_classificationbanks5e8/")
+    local_data_path = Path("c:\\users\\cauchepy\\Datasets\\Datatables\\kaggle_classificationbanks5e8\\")
+    # local_data_path = Path("/home/yanncauchepin/Datasets/Datatables/kaggle_classificationbanks5e8/")
     train_df = pd.read_csv(Path(local_data_path, "train.csv"))
     test_df = pd.read_csv(Path(local_data_path, "test.csv"))
 except FileNotFoundError:
@@ -49,18 +49,18 @@ for col in numerical_features:
     X[col] = X[col].astype(np.float32)
     X_test[col] = X_test[col].astype(np.float32)
 
-for col in categorical_features:
-    le = LabelEncoder()
-    X[col] = le.fit_transform(X[col])
-    X_test[col] = le.transform(X_test[col])
-    
 numerical_transformer = Pipeline(steps=[
     ('scaler', StandardScaler())
+])
+
+categorical_transformer = Pipeline(steps=[
+    ('onehot', OneHotEncoder(handle_unknown='ignore'))
 ])
 
 preprocessor = ColumnTransformer(
     transformers=[
         ('num', numerical_transformer, numerical_features),
+        ('cat', categorical_transformer, categorical_features)
     ],
     remainder='passthrough'
 )
@@ -86,7 +86,7 @@ class MLP(nn.Module):
 # --- FIX 1: Correctly configure skorch model for early stopping ---
 mlp_model = NeuralNetClassifier(
     MLP,
-    module__input_size=len(numerical_features) + len(categorical_features),
+    module__input_size=len(numerical_features) + len(categorical_features), # This will be updated later
     module__output_size=2,
     iterator_train__shuffle=True,
     criterion=nn.CrossEntropyLoss,
@@ -156,6 +156,10 @@ preprocessor.fit(X_train, y_train)
 X_train_processed = preprocessor.transform(X_train)
 X_val_processed = preprocessor.transform(X_val)
 
+# Update mlp_model input size after preprocessing
+mlp_model.set_params(module__input_size=X_train_processed.shape[1])
+
+
 for i, params in enumerate(param_sampler):
     print(f"\n--- Iteration {i + 1}/{N_ITER} ---")
     
@@ -172,16 +176,19 @@ for i, params in enumerate(param_sampler):
         # --- MLP ---
         mlp = clone(mlp_model).set_params(**mlp_params)
         mlp.fit(X_train_processed, y_train)
-        
+        print(f"MLP Training done with accuracy: {accuracy_score(y_val, mlp.predict(X_val_processed))}")
+
         # --- XGBoost ---
         xgb_clf = xgb.XGBClassifier(objective='binary:logistic', eval_metric='logloss', random_state=42, early_stopping_rounds=10)
         xgb_clf.set_params(**xgb_params)
         xgb_clf.fit(X_train_processed, y_train, eval_set=[(X_val_processed, y_val)], verbose=False)
+        print(f"XGBoost Training done with accuracy: {accuracy_score(y_val, xgb_clf.predict(X_val_processed))}")
 
         # --- CatBoost ---
         cat_clf = CatBoostClassifier(random_state=42, early_stopping_rounds=10)
         cat_clf.set_params(**cat_params)
         cat_clf.fit(X_train_processed, y_train, eval_set=[(X_val_processed, y_val)], verbose=False)
+        print(f"CatBoost Training done with accuracy: {accuracy_score(y_val, cat_clf.predict(X_val_processed))}")
 
         # 3. Get predictions and manually average them (soft voting)
         print("Evaluating ensemble...")
