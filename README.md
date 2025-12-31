@@ -8,4 +8,4 @@
 <b>Season 5, Episode 8</b> - <i>Binary Classification with a Bank Dataset</i> : 671 / 3365 <br>
 <b>Season 5, Episode 9</b> - <i>Predicting the Beats-per-Minute of Songs</i> : 174 / 2581 <br>
 <b>Season 5, Episode 10</b> - <i>Predicting Road Accident Risk</i> : 452 / 4082 <br>
-
+<b>Season 5, Episode 11</b> - <i>Predicting Loan Payback</i> : 58 / 3724 <br>
